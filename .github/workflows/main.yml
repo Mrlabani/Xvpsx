@@ -1,0 +1,39 @@
+name: Free Ubuntu VPS (Root)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  vps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Install base packages
+        run: |
+          sudo apt update
+          sudo apt install -y openssh-server curl unzip sudo
+
+      - name: Enable ROOT + SSH
+        run: |
+          echo "root:${{ secrets.SSH_PASSWORD }}" | sudo chpasswd
+          sudo sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+          sudo sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+          sudo service ssh restart
+
+      - name: Install ngrok
+        run: |
+          curl -fsSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc \
+          | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc
+          echo "deb https://ngrok-agent.s3.amazonaws.com buster main" \
+          | sudo tee /etc/apt/sources.list.d/ngrok.list
+          sudo apt update
+          sudo apt install -y ngrok
+          ngrok config add-authtoken ${{ secrets.NGROK_TOKEN }}
+
+      - name: Start VPS (6 Hours)
+        run: |
+          ngrok tcp 22 &
+          sleep 10
+          curl http://127.0.0.1:4040/api/tunnels
+          sleep 21600
