@@ -12,7 +12,7 @@ jobs:
       - name: Install base packages
         run: |
           sudo apt update
-          sudo apt install -y openssh-server curl unzip jq ca-certificates gnupg lsb-release
+          sudo apt install -y openssh-server curl unzip jq ca-certificates
 
       - name: Enable ROOT SSH
         run: |
@@ -24,14 +24,13 @@ jobs:
       - name: Install Docker
         run: |
           curl -fsSL https://get.docker.com | sh
-          systemctl enable docker
-          systemctl start docker
+          sudo systemctl enable docker
+          sudo systemctl start docker
 
       - name: Install Portainer
         run: |
-          docker volume create portainer_data
-          docker run -d \
-            --name portainer \
+          sudo docker volume create portainer_data
+          sudo docker run -d --name portainer \
             --restart=always \
             -p 9000:9000 \
             -p 8000:8000 \
@@ -41,19 +40,17 @@ jobs:
 
       - name: Install ngrok
         run: |
-          curl -fsSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc \
-          | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc
-          echo "deb https://ngrok-agent.s3.amazonaws.com buster main" \
-          | sudo tee /etc/apt/sources.list.d/ngrok.list
+          curl -fsSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc
+          echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
           sudo apt update
           sudo apt install -y ngrok
           ngrok config add-authtoken ${{ secrets.NGROK_TOKEN }}
 
       - name: Start ngrok tunnels
         run: |
-          ngrok tcp 22 &
-          ngrok http 9000 &
-          sleep 10
+          ngrok tcp 22 > /dev/null &
+          ngrok http 9000 > /dev/null &
+          sleep 12
 
       - name: Send SSH + Portainer to Telegram
         run: |
@@ -62,29 +59,27 @@ jobs:
           SSH_URL=$(echo "$DATA" | jq -r '.tunnels[] | select(.proto=="tcp") | .public_url')
           WEB_URL=$(echo "$DATA" | jq -r '.tunnels[] | select(.proto=="https") | .public_url')
 
-          HOST=$(echo $SSH_URL | cut -d':' -f2 | tr -d '/')
-          PORT=$(echo $SSH_URL | cut -d':' -f3)
+          HOST=$(echo "$SSH_URL" | cut -d':' -f2 | tr -d '/')
+          PORT=$(echo "$SSH_URL" | cut -d':' -f3)
 
-          MSG="🚀 *FREE Ubuntu VPS READY*
+          MSG="🚀 FREE Ubuntu VPS READY
 
-🖥 OS: Ubuntu Latest
-👤 User: root
-🔑 Password: ${{ secrets.SSH_PASSWORD }}
+OS: Ubuntu Latest
+User: root
+Password: ${{ secrets.SSH_PASSWORD }}
 
-🔐 SSH:
-\`ssh root@$HOST -p $PORT\`
+SSH:
+ssh root@$HOST -p $PORT
 
-🐳 Docker: Installed
-🎛 Portainer UI:
+Portainer UI:
 $WEB_URL
 
-⏱ Active ~6 hours
-⚠️ Auto-destroy after job ends"
+Active ~6 hours
+Auto-destroy enabled"
 
           curl -s -X POST https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendMessage \
-          -d chat_id=${{ secrets.TG_CHAT_ID }} \
-          -d parse_mode=Markdown \
-          -d text="$MSG"
+            -d chat_id=${{ secrets.TG_CHAT_ID }} \
+            -d text="$MSG"
 
       - name: Keep VPS Alive
         run: sleep 21600
