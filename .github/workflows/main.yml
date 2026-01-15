@@ -1,4 +1,4 @@
-name: Free Ubuntu VPS + Docker + Portainer + Telegram
+name: Free Ubuntu VPS (Docker + Portainer + Telegram)
 
 on:
   workflow_dispatch:
@@ -9,28 +9,43 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      - name: Install base packages
+      - name: System setup
         run: |
+          set -e
           sudo apt update
-          sudo apt install -y openssh-server curl unzip jq ca-certificates
+          sudo apt install -y \
+            openssh-server \
+            curl \
+            unzip \
+            jq \
+            ca-certificates
 
-      - name: Enable ROOT SSH
+      - name: Enable root SSH access
         run: |
+          set -e
           echo "root:${{ secrets.SSH_PASSWORD }}" | sudo chpasswd
-          sudo sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
-          sudo sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
-          sudo service ssh restart
+
+          sudo sed -i \
+            -e 's/^#\?PermitRootLogin.*/PermitRootLogin yes/' \
+            -e 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' \
+            /etc/ssh/sshd_config
+
+          sudo systemctl restart ssh
 
       - name: Install Docker
         run: |
-          curl -fsSL https://get.docker.com | sh
+          set -e
+          curl -fsSL https://get.docker.com | sudo sh
           sudo systemctl enable docker
           sudo systemctl start docker
 
       - name: Install Portainer
         run: |
+          set -e
           sudo docker volume create portainer_data
-          sudo docker run -d --name portainer \
+
+          sudo docker run -d \
+            --name portainer \
             --restart=always \
             -p 9000:9000 \
             -p 8000:8000 \
@@ -40,29 +55,38 @@ jobs:
 
       - name: Install ngrok
         run: |
-          curl -fsSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc
-          echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
+          set -e
+          curl -fsSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc \
+            | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
+
+          echo "deb https://ngrok-agent.s3.amazonaws.com buster main" \
+            | sudo tee /etc/apt/sources.list.d/ngrok.list >/dev/null
+
           sudo apt update
           sudo apt install -y ngrok
-          ngrok config add-authtoken ${{ secrets.NGROK_TOKEN }}
+
+          ngrok config add-authtoken "${{ secrets.NGROK_TOKEN }}"
 
       - name: Start ngrok tunnels
         run: |
-          ngrok tcp 22 > /dev/null &
-          ngrok http 9000 > /dev/null &
+          set -e
+          ngrok tcp 22 >/dev/null &
+          ngrok http 9000 >/dev/null &
           sleep 12
 
-      - name: Send SSH + Portainer to Telegram
+      - name: Send SSH & Portainer info to Telegram
         run: |
-          DATA=$(curl -s http://127.0.0.1:4040/api/tunnels)
+          set -e
 
-          SSH_URL=$(echo "$DATA" | jq -r '.tunnels[] | select(.proto=="tcp") | .public_url')
-          WEB_URL=$(echo "$DATA" | jq -r '.tunnels[] | select(.proto=="https") | .public_url')
+          DATA="$(curl -s http://127.0.0.1:4040/api/tunnels)"
 
-          HOST=$(echo "$SSH_URL" | cut -d':' -f2 | tr -d '/')
-          PORT=$(echo "$SSH_URL" | cut -d':' -f3)
+          SSH_URL="$(echo "$DATA" | jq -r '.tunnels[] | select(.proto=="tcp") | .public_url')"
+          WEB_URL="$(echo "$DATA" | jq -r '.tunnels[] | select(.proto=="https") | .public_url')"
 
-          MSG="🚀 FREE Ubuntu VPS READY
+          HOST="$(echo "$SSH_URL" | cut -d':' -f2 | tr -d '/')"
+          PORT="$(echo "$SSH_URL" | cut -d':' -f3)"
+
+          MESSAGE="🚀 FREE Ubuntu VPS READY
 
 OS: Ubuntu Latest
 User: root
@@ -74,12 +98,13 @@ ssh root@$HOST -p $PORT
 Portainer UI:
 $WEB_URL
 
-Active ~6 hours
-Auto-destroy enabled"
+⏱ Active ~6 hours
+⚠️ Auto-destroy after job ends"
 
-          curl -s -X POST https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendMessage \
-            -d chat_id=${{ secrets.TG_CHAT_ID }} \
-            -d text="$MSG"
+          curl -s -X POST \
+            "https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendMessage" \
+            -d chat_id="${{ secrets.TG_CHAT_ID }}" \
+            -d text="$MESSAGE"
 
-      - name: Keep VPS Alive
+      - name: Keep VPS alive
         run: sleep 21600
