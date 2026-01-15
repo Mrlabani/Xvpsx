@@ -1,4 +1,4 @@
-name: Free Ubuntu VPS (Root)
+name: Free Ubuntu VPS + Docker + Portainer + Telegram
 
 on:
   workflow_dispatch:
@@ -12,14 +12,32 @@ jobs:
       - name: Install base packages
         run: |
           sudo apt update
-          sudo apt install -y openssh-server curl unzip sudo
+          sudo apt install -y openssh-server curl unzip jq ca-certificates gnupg lsb-release
 
-      - name: Enable ROOT + SSH
+      - name: Enable ROOT SSH
         run: |
           echo "root:${{ secrets.SSH_PASSWORD }}" | sudo chpasswd
           sudo sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
           sudo sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
           sudo service ssh restart
+
+      - name: Install Docker
+        run: |
+          curl -fsSL https://get.docker.com | sh
+          systemctl enable docker
+          systemctl start docker
+
+      - name: Install Portainer
+        run: |
+          docker volume create portainer_data
+          docker run -d \
+            --name portainer \
+            --restart=always \
+            -p 9000:9000 \
+            -p 8000:8000 \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v portainer_data:/data \
+            portainer/portainer-ce:latest
 
       - name: Install ngrok
         run: |
@@ -31,9 +49,42 @@ jobs:
           sudo apt install -y ngrok
           ngrok config add-authtoken ${{ secrets.NGROK_TOKEN }}
 
-      - name: Start VPS (6 Hours)
+      - name: Start ngrok tunnels
         run: |
           ngrok tcp 22 &
+          ngrok http 9000 &
           sleep 10
-          curl http://127.0.0.1:4040/api/tunnels
-          sleep 21600
+
+      - name: Send SSH + Portainer to Telegram
+        run: |
+          DATA=$(curl -s http://127.0.0.1:4040/api/tunnels)
+
+          SSH_URL=$(echo "$DATA" | jq -r '.tunnels[] | select(.proto=="tcp") | .public_url')
+          WEB_URL=$(echo "$DATA" | jq -r '.tunnels[] | select(.proto=="https") | .public_url')
+
+          HOST=$(echo $SSH_URL | cut -d':' -f2 | tr -d '/')
+          PORT=$(echo $SSH_URL | cut -d':' -f3)
+
+          MSG="🚀 *FREE Ubuntu VPS READY*
+
+🖥 OS: Ubuntu Latest
+👤 User: root
+🔑 Password: ${{ secrets.SSH_PASSWORD }}
+
+🔐 SSH:
+\`ssh root@$HOST -p $PORT\`
+
+🐳 Docker: Installed
+🎛 Portainer UI:
+$WEB_URL
+
+⏱ Active ~6 hours
+⚠️ Auto-destroy after job ends"
+
+          curl -s -X POST https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendMessage \
+          -d chat_id=${{ secrets.TG_CHAT_ID }} \
+          -d parse_mode=Markdown \
+          -d text="$MSG"
+
+      - name: Keep VPS Alive
+        run: sleep 21600
